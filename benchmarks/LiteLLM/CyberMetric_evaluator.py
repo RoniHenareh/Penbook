@@ -1,0 +1,121 @@
+import os
+import re
+import json
+import time
+from tqdm import tqdm
+#from openai import OpenAI 
+
+# add reverse proxy instead
+# start with: litellm --config litellm_config.yaml
+
+# hide openai HTTP logging messages
+import logging
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+
+# better way to use API key
+from dotenv import load_dotenv
+load_dotenv()
+
+# integrate LiteLLM
+from openai import OpenAI
+
+external_client = OpenAI(
+  base_url = os.getenv('LITELLM_BASE_URL', 'http://localhost:4000'),
+  api_key=os.getenv('LITELLM_API_KEY', 'key'))
+
+# pick the model
+llm_model=os.getenv('LLM_MODEL', 'gpt-5')
+#llm_model=os.getenv('LLM_MODEL', 'claude-4')
+#llm_model=os.getenv('LLM_MODEL', 'gemini-3')
+
+# download models from ollama first
+#llm_model=os.getenv('LLM_MODEL', 'deepseek-r1:8b')
+#llm_model=os.getenv('LLM_MODEL', 'llama3.1:8b')
+#llm_model=os.getenv('LLM_MODEL', 'mistral:7b')
+
+class CyberMetricEvaluator:
+    
+    def __init__(self, client, model, file_path):
+        self.client = client
+        self.model = model
+        self.file_path = file_path
+
+    def read_json_file(self):
+        with open(self.file_path, 'r') as file:
+            return json.load(file)
+
+    @staticmethod
+    def extract_answer(response):
+        if response.strip():  # Checks if the response is not empty and not just whitespace
+            match = re.search(r"ANSWER:?\s*([A-D])", response, re.IGNORECASE)
+            if match:
+                return match.group(1).upper()  # Return the matched letter in uppercase
+        return None
+
+    def ask_llm(self, question, answers, max_retries=5):
+        options = ', '.join([f"{key}) {value}" for key, value in answers.items()])
+        prompt = f"Question: {question}\nOptions: {options}\n\nChoose the correct answer (A, B, C, or D) only. Always return in this format: 'ANSWER: X' "
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a security expert who answers questions."},
+                        {"role": "user", "content": prompt},
+                    ]
+                )
+                if response.choices:
+                    result = self.extract_answer(response.choices[0].message.content)
+                    if result:
+                        return result
+                    else:
+                        print("Incorrect answer format detected. Attempting the question again.")
+            except Exception as e:
+                print(f"Error: {e}. Attempting the question again in {2 ** attempt} seconds.")
+                time.sleep(2 ** attempt)
+        return None
+
+    def run_evaluation(self):
+
+        json_data = self.read_json_file()
+        questions_data = json_data['questions']
+
+        correct_count = 0
+        incorrect_answers = []
+
+        with tqdm(total=len(questions_data), desc="Processing Questions") as progress_bar:
+            for item in questions_data:
+                question = item['question']
+                answers = item['answers']
+                correct_answer = item['solution']
+
+                llm_answer = self.ask_llm(question, answers)
+                if llm_answer == correct_answer:
+                    correct_count += 1
+                else:
+                    incorrect_answers.append({
+                        'question': question,
+                        'correct_answer': correct_answer,
+                        'llm_answer': llm_answer
+                    })
+
+                accuracy_rate = correct_count / (progress_bar.n + 1) * 100
+                progress_bar.set_postfix_str(f"Accuracy: {accuracy_rate:.2f}%")
+                progress_bar.update(1)
+
+        print(f"Final Accuracy: {correct_count / len(questions_data) * 100}%")
+
+        if incorrect_answers:
+            print("\nIncorrect Answers:")
+            for item in incorrect_answers:
+                print(f"Question: {item['question']}")
+                print(f"Expected Answer: {item['correct_answer']}, LLM Answer: {item['llm_answer']}\n")
+
+# Example usage:
+if __name__ == "__main__":
+
+    file_path='../CyberMetric/CyberMetric-2000-v1.json'
+
+    evaluator = CyberMetricEvaluator(client=external_client, model=llm_model, file_path=file_path)
+    evaluator.run_evaluation()
