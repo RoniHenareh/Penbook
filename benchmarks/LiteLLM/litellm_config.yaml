@@ -2,7 +2,7 @@ model_list:
 
   - model_name: gpt-5
     litellm_params:
-      model: gpt-5-nano-2025-08-07
+      model: gpt-5
       api_key: "os.environ/OPENAI_API_KEY"
       api_base: https://api.openai.com/v1
 
@@ -14,16 +14,9 @@ model_list:
 
   - model_name: gemini-3
     litellm_params:
-      model: gemini/gemini-3-flash-preview
+      model: gemini/gemini-3-pro-preview
       api_key: "os.environ/GEMINI_API_KEY"
-
-  # för skojs skull
-  - model_name: mistral:7b
-    litellm_params:
-      model: ollama/mistral:7b
-      api_base: http://localhost:11434  # Default Ollama port
-      api_key: "dummy" # Ollama doesn't need a real API key
-
+      
 litellm_settings:
   drop_params: true
   set_verbose: true
